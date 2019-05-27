@@ -2,8 +2,6 @@ import numpy as np
 import time as timer
 from math import lgamma, pi, log1p
 from scipy.stats import invgamma, invwishart, multivariate_normal, norm, t
-import matplotlib.pyplot as plt
-import matplotlib.colors as colors
 
 Record_sample = np.dtype({
     'names': ['longitude', 'latitude', 'time', 'weekend', 'POI', 'cat6', 'cat16', 'cat54', 'r', 'c', 'z', 'u'],
@@ -11,7 +9,7 @@ Record_sample = np.dtype({
 
 
 def dataloader(city):
-    data = np.load(city + '_dataset/traindata.npy')
+    data = np.load(city + '_dataset/labeled.npy')
     dataset = np.array([], dtype=Record_sample)
     for d in data:
         dataset = np.concatenate([dataset,
@@ -26,14 +24,15 @@ def multivariate_t(x, mu, Sigma, df):
     dec = np.linalg.cholesky(Sigma)
     R_x_m = np.linalg.solve(dec, np.matrix.transpose(x)-mu)
     rss = np.power(R_x_m,2).sum(axis=0)
-    logretval = lgamma(1.0*(p + df)/2) - (lgamma(1.0*df/2) + np.sum(np.log(dec.diagonal()))
-       + p/2 * np.log(pi * df)) - 0.5 * (df + p) * log1p((rss/df) )
-    return (np.exp(logretval))
+    logretval = lgamma(1.0*(p + df)/2) - (lgamma(1.0*df/2) + np.sum(np.log(dec.diagonal())) + p/2 * np.log(pi * df)) - 0.5 * (df + p) * log1p(rss/df)
+    return np.exp(logretval)
 
 
 def main():
     # city = 'Beijing'
     city = 'Guangzhou'
+    category_num = 16
+    region_num = 225
     if city == 'Guangzhou':
         user_num = 427
     elif city == 'Beijing':
@@ -43,25 +42,22 @@ def main():
     latitude = record['latitude']
     time = record['time']
     print(city + ' dataset loaded. Record number: %d.' % record.size)
-    gibbs_iter_num = 20
+    gibbs_iter_num = 30
 
-    color_list = list(colors.cnames.values())
-    region_num = 225
-    category_num = 16
-    period_num = 2
     alpha = 10000.0
     beta = 10.0
     gamma = 10.0
     upsilon_0 = np.array([np.mean(longitude), np.mean(latitude)])
     upsilon_0_mat = upsilon_0[:, np.newaxis]
     kappa_0 = 1.0
-    rho_0 = 10
+    rho_0 = 10.0
     zeta_0 = np.cov(longitude, latitude)
     epsilon_0 = np.mean(time)
     lambda_0 = 1.0
-    tau_0 = 2
+    tau_0 = 2.0
     xi_0 = np.var(time)
-    b = 3
+    b = 3.0
+    period_num = 2
 
     Sigma = np.zeros((region_num, 2, 2), dtype=np.float64)
     Sigma_sum = np.zeros((region_num, 2, 2), dtype=np.float64)
@@ -87,7 +83,6 @@ def main():
 
     for gibbs_iter in range(gibbs_iter_num):
         time_start = timer.time()
-        # fig, ax = plt.subplots()
         print('Gibbs iteration %d' % gibbs_iter)
         np.random.shuffle(record)
         p_l = np.zeros(region_num, dtype=np.float64)
@@ -102,6 +97,7 @@ def main():
                 z_i = d['z']
                 n_r[r_i] -= 1
                 n_rc[r_i, c_i] -= 1
+                n_urc[d['u'] - 1, r_i, c_i] -= 1
                 n_c[c_i] -= 1
                 n_cz[c_i, z_i] -= 1
 
@@ -185,6 +181,7 @@ def main():
             Sigma[r_i] = zeta * (kappa + 1) / kappa / (rho - 1)
             n_c[c_i] += 1
             n_rc[r_i, c_i] += 1
+            n_urc[d['u'] - 1, r_i, c_i] += 1
             n_cz[c_i, z_i] += 1
             n = n_cz[c_i, z_i]
             nu_sum[c_i, z_i] += time
@@ -196,27 +193,12 @@ def main():
             tau = tau_0 + n
             sigma[c_i, z_i] = xi * (lamb + 1) / lamb / (tau - 1)
 
-            # ax.scatter(d['longitude'], d['latitude'], marker='x', color=color_list[r_i[0] % 148])
-
             i += 1
 
-        # plt.savefig('checkpoint/Region_iter' + str(gibbs_iter) + '.png')
-        # plt.close()
-
-        # x = np.linspace(4, 28, 1000)
-        # fig, ax = plt.subplots()
-        # for c in range(category_num):
-        #     y = np.zeros(1000)
-        #     for z in range(period_num):
-        #         y += t.pdf((x - nu[c, z]) / np.sqrt(sigma[c, z]), n_cz[c, z] + tau_0) * (n_cz[c, z] + gamma)
-        #     ax.plot(x, y)
-        # plt.savefig('checkpoint/TimePattern_iter' + str(gibbs_iter) + '.png')
-        # plt.close()
         time_end = timer.time()
         print(time_end-time_start)
 
     n_ct = np.zeros((category_num, 28), dtype=int)
-    fig, ax = plt.subplots()
     for d in record:
         longitude = d['longitude']
         latitude = d['latitude']
@@ -230,8 +212,6 @@ def main():
         n_urc[d['u'] - 1, r_i, d['cat'+str(category_num)]] += 1
         n_rc[r_i, d['cat'+str(category_num)]] += 1
         n_ct[d['cat'+str(category_num)], int(d['time'])] += 1
-        ax.scatter(d['longitude'], d['latitude'], marker='x', color=color_list[r_i % 148])
-    plt.savefig('parameters/Region_final.png')
     np.save('parameters/n_rc.npy', n_rc)
     np.save('parameters/n_urc.npy', n_urc)
     np.save('parameters/n_ct.npy', n_ct)
@@ -241,30 +221,11 @@ def main():
     np.save('parameters/nu.npy', nu)
     np.save('parameters/sigma.npy', sigma)
 
-    # x = np.linspace(4, 28, 1000)
-    # for c in range(category_num):
-    #     fig, ax = plt.subplots()
-    #     y = np.zeros(1000)
-    #     for z in range(period_num):
-    #         y += t.pdf((x - nu[c, z]) / np.sqrt(sigma[c, z]), n_cz[c, z] + tau_0) * (n_cz[c, z] + gamma) / sum(n_cz[c, :] + gamma)
-    #     ax.plot(x, y)
-    #     plt.savefig('checkpoint/TimePattern_Cat' + str(c) + '.png')
-    #     plt.close()
-
     Phi_r = (n_rc+beta) / np.repeat((n_rc+beta).sum(axis=1), category_num).reshape(region_num, category_num).astype(float)
     for user_iter in range(user_num):
         print('User %d' % user_iter)
         time_start = timer.time()
         Phi_ur = Phi_r * b + n_urc[user_iter, :, :]
-
-        n_ur = n_urc[user_iter, :, :].sum(axis=1)
-        r_max = np.argmax(n_ur)
-        fig, ax = plt.subplots()
-        y = n_urc[user_iter, r_max, :]
-        ax.bar(np.arange(category_num)+0.4, y, width=0.2)
-        ax.bar(np.arange(category_num)+0.2, Phi_ur[r_max, :], width=0.2)
-        ax.bar(np.arange(category_num), Phi_r[r_max, :], width=0.2)
-
         n_r_u = n_r
         n_cz_u = n_cz
         n_c_u = n_c
@@ -401,9 +362,6 @@ def main():
                 i += 1
         time_end = timer.time()
         print(time_end-time_start)
-        # ax.bar(np.arange(category_num)+0.6, Phi_ur[r_max, :], width=0.2)
-        # plt.savefig('checkpoint/user' + str(user_iter) + '.png')
-        # plt.close()
         np.save('parameters/Phi_ur' + str(user_iter) + '.npy', Phi_ur)
 
 
